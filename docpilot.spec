@@ -7,6 +7,11 @@ with their package path intact - so shipping 'assets' and 'frontend/dist' at
 the bundle root makes every existing path resolve with no code changes.
 """
 
+import os
+import sys
+sys.path.insert(0, os.path.abspath('.'))
+from backend.version import LABEL      # the bundle folder carries the version
+
 datas = [
     ('assets', 'assets'),                    # templates, brand images, bundled fonts
     ('frontend/dist', 'frontend/dist'),      # the built UI
@@ -19,7 +24,7 @@ hiddenimports = [
     'uvicorn.protocols.websockets', 'uvicorn.protocols.websockets.auto',
     'uvicorn.lifespan', 'uvicorn.lifespan.on',
     'backend.app', 'backend.jobs', 'backend.drive', 'backend.categories',
-    'backend.fonts',
+    'backend.fonts', 'backend.version', 'backend.updater',
     'backend.pipeline.daily_ca', 'backend.pipeline.daily_ca_hindi',
     'backend.pipeline.prelims_ab', 'backend.pipeline.prelims_qb',
     'backend.pipeline.mains_ab', 'backend.pipeline.fitter',
@@ -69,5 +74,5 @@ exe = EXE(
 coll = COLLECT(
     exe, a.binaries, a.datas,
     strip=False, upx=False, upx_exclude=[],
-    name='DocPilot-2.0-beta',
+    name='DocPilot-' + LABEL,
 )

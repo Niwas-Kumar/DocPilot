@@ -48,9 +48,26 @@ once per process.
 python tools\build_installer.py          :: icon -> PyInstaller -> Inno Setup, ~10 min
 python tools\build_installer.py --skip-app   :: installer only, reuses dist\
 ```
-Output: `dist\DocPilot-Setup-1.0-beta.exe`. Needs Inno Setup 6 (free). The
+Output: `dist\DocPilot-Setup-<version>.exe`; the version comes from
+`backend\version.py`. Needs Inno Setup 6 (free). The
 installer is **per-user on purpose** — the app writes its job scratch inside
 its own folder, so Program Files would break it. See README → Installer.
+
+### Releasing an update (users click **Update** in the app)
+
+1. Bump `VERSION` in `backend\version.py` (dotted numbers, e.g. `2.1.1`).
+2. `python tools\build_installer.py` — it ends by printing the update-notice
+   lines, including the setup's `sha256`.
+3. Upload `dist\DocPilot-Setup-<version>.exe` to Drive and share it as
+   *Anyone with the link can view*.
+4. Edit the update-notice Google Doc (its link is `UPDATE_MANIFEST` in
+   `backend\version.py`; never change that link) to the printed lines, with
+   the uploaded file's link as `installer:`.
+
+Every installed DocPilot checks the notice when its page opens and shows
+**Update to &lt;version&gt;**. Clicking it downloads the setup, closes DocPilot,
+installs silently into the same folder (job files kept) and reopens it.
+Details: `backend\updater.py`.
 
 ## 4. Tests
 

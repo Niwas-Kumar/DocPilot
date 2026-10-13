@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
-"""Prelims Test Series - Question Booklet (Bilingual).
+"""Prelims Test Series - Question Booklet (Bilingual, English or Hindi).
 
-Two uploads (English + Hindi). The published booklet alternates by PAGE:
+Bilingual: two uploads (English + Hindi). The published booklet alternates by PAGE:
 one page of Hindi questions, then the SAME questions in English, and so on -
 each page being a two-column snaking layout. Hindi comes first.
 
@@ -9,6 +9,9 @@ The official sample achieves that by micro-tuning line spacing per question
 (40 distinct leading values, some non-integer) and it stops lining up after
 page 8. We instead group the questions and let Word paginate each block, then
 force a break - the alignment then holds for the whole booklet.
+
+English / Hindi: one upload, the same pages in that language alone - its
+cover and instructions in front, no other-language pages (`_arrange`).
 
 Formatting only: the title lines are left blank because the raw files do not
 contain them.
@@ -248,9 +251,9 @@ def _normalize_qb(p_el, lang, line="271", statement=None, question_gap=False):
     # cost the booklet a third of its density.
     if lang == "hi":
         _force_hindi_font(p_el)
-        _unbold_whole_line(p_el)
     else:
         _force_english_font(p_el)
+    _no_bold(p_el)
 
 
 # Symbol faces carry their own glyphs (Wingdings ticks, math signs); forcing
@@ -416,57 +419,39 @@ def _list_labels(src_doc):
     return labels
 
 
-def _is_bold(r):
-    rpr = r.find(qn('w:rPr'))
-    if rpr is None:
-        return False
-    for tag in ('w:b', 'w:bCs'):
-        el = rpr.find(qn(tag))
-        if el is not None and el.get(qn('w:val')) not in ('0', 'false'):
-            return True
-    return False
+def _no_bold(el):
+    """No bold anywhere in a question - stem, number, statements, options,
+    table cells - as the client asked (2026-10-13).
 
-
-def _unbold_whole_line(p_el):
-    """The raw Hindi paper sets whole stems and closing lines in bold
-    ("उपर्युक्त कथनों में से कौन-सा/से सही है/हैं?"); the published booklet
-    prints them regular and keeps bold only where the typist marked part
-    of a line - 'कथन I:', 'अभिकथन (A):', a key term. So a paragraph that is
-    (almost) all bold loses it, except its question number."""
-    runs = [r for r in p_el.iter(qn('w:r')) if "".join(t.text or "" for t in r.findall(qn('w:t'))).strip()]
-    total = sum(len("".join(t.text or "" for t in r.findall(qn('w:t'))).replace(" ", "")) for r in runs)
-    bold = sum(len("".join(t.text or "" for t in r.findall(qn('w:t'))).replace(" ", ""))
-               for r in runs if _is_bold(r))
-    if not total or bold < 0.8 * total:
-        return
-    number = re.match(r"^\s*\d{1,3}\s*[.)]\s*", "".join(
-        "".join(t.text or "" for t in r.findall(qn('w:t'))) for r in runs))
-    keep = len(number.group(0)) if number else 0     # chars of '13. ' to keep bold
-    for r in runs:
-        text = "".join(t.text or "" for t in r.findall(qn('w:t')))
-        if keep >= len(text) and keep:
-            keep -= len(text)
-            continue
-        if keep:
-            # the number shares a run with the stem: split it off, still bold
-            head = copy.deepcopy(r)
-            for t in head.findall(qn('w:t'))[1:]:
-                head.remove(t)
-            ht = head.find(qn('w:t'))
-            ht.text = text[:keep]
-            ht.set(qn('xml:space'), 'preserve')
-            for t in r.findall(qn('w:t'))[1:]:
-                r.remove(t)
-            rt = r.find(qn('w:t'))
-            rt.text = text[keep:]
-            rt.set(qn('xml:space'), 'preserve')
-            r.addprevious(head)
-            keep = 0
+    Bold is switched OFF explicitly (w:b w:val="0") on every run and on the
+    paragraph mark rather than just removed: a raw paragraph or character
+    style that is itself bold would otherwise still print bold.
+    """
+    after = (qn('w:rStyle'), qn('w:rFonts'))
+    for r in el.iter(qn('w:r')):
         rpr = r.find(qn('w:rPr'))
-        if rpr is not None:
-            for tag in ('w:b', 'w:bCs'):
-                for el in rpr.findall(qn(tag)):
-                    rpr.remove(el)
+        if rpr is None:
+            rpr = r.makeelement(qn('w:rPr'), {})
+            r.insert(0, rpr)
+        _bold_off(rpr, after)
+    for ppr in el.iter(qn('w:pPr')):
+        mark = ppr.find(qn('w:rPr'))
+        if mark is not None:
+            _bold_off(mark, (qn('w:ins'), qn('w:del'), qn('w:moveFrom'),
+                             qn('w:moveTo'), qn('w:rStyle'), qn('w:rFonts')))
+
+
+def _bold_off(rpr, after):
+    """rPr children are order-sensitive: b and bCs go right after
+    rStyle / rFonts (and the revision marks a paragraph mark may carry)."""
+    for tag in ('w:b', 'w:bCs'):
+        for old in rpr.findall(qn(tag)):
+            rpr.remove(old)
+    pos = sum(1 for c in rpr if c.tag in after)
+    for tag in ('w:bCs', 'w:b'):          # inserted in reverse: b, then bCs
+        off = rpr.makeelement(qn(tag), {})
+        off.set(qn('w:val'), '0')
+        rpr.insert(pos, off)
 
 
 def _force_rpr(rpr):
@@ -701,6 +686,7 @@ def _emit_group_blocks(out, table, src_doc, group, lang, tail, break_before,
             else:
                 if new.tag == qn('w:tbl'):
                     _fit_table_to_column(new, lang)
+                    _no_bold(new)
                 # Word also counts each table row's end mark; counting only
                 # the w:p put every question after the paper's first table a
                 # few paragraphs out, so each one measured as "taller than a
@@ -737,14 +723,14 @@ def _section_break_continuous(before, cols=2):
 
 
 def _write_probe(table, src_doc, lang, numbers, probe_path, groups=None,
-                 layout=None):
+                 layout=None, langs=("hi", "en")):
     """One language rendered exactly as the final booklet will render it -
     same copy, same normalization, same page-break mechanism - so the
     measurement cannot drift from the real layout.
     `layout` = {group index: (split, line)} as _emit_group_blocks takes them.
     Returns ({question_no: paragraph_index}, {group: last paragraph index}).
     """
-    out = dt.open_template(TEMPLATE)
+    out = _open_booklet(langs)
     # The probe has to paginate exactly like the final booklet, so it keeps
     # the template's front matter and pours the questions into the same
     # sentinel. Word counts every paragraph, so the questions' indices start
@@ -766,11 +752,13 @@ def _write_probe(table, src_doc, lang, numbers, probe_path, groups=None,
     para_count = 0
     for gi, group in enumerate(order):
         split, line = (layout or {}).get(gi, (None, "271"))
-        # In the booklet only the HINDI half of the first group shares the
-        # title band's page; its English half follows on a fresh page, so
-        # the English probe turns the page there too.
+        # In the bilingual booklet only the HINDI half of the first group
+        # shares the title band's page; its English half follows on a fresh
+        # page, so the English probe turns the page there too. A one-language
+        # booklet opens straight under the band.
         fmap, cnt = _emit_group_blocks(out, table, src_doc, group, lang, tail,
-                                       break_before=gi > 0 or lang == "en",
+                                       break_before=gi > 0 or (
+                                           lang == "en" and len(langs) > 1),
                                        line=line, split=split)
         for n, i in fmap.items():
             first_para_of[n] = (i + para_count) if i is not None else None
@@ -838,7 +826,8 @@ def _column_extents(page):
             "rb": max(b[3] for b in right) if right else None}
 
 
-def _render(table, src_doc, lang, numbers, workdir, groups, layout, cancelled):
+def _render(table, src_doc, lang, numbers, workdir, groups, layout, cancelled,
+            langs=("hi", "en")):
     """Render one language's probe. Per group: the page its first and last
     paragraphs land on, the page the right-hand column's first question
     lands on, and the column extents of that page (and of the next page when
@@ -848,7 +837,7 @@ def _render(table, src_doc, lang, numbers, workdir, groups, layout, cancelled):
     probe = os.path.join(workdir, f"_probe_{lang}.docx")
     pdf = os.path.join(workdir, f"_probe_{lang}.pdf")
     idx, last_idx = _write_probe(table, src_doc, lang, numbers, probe,
-                                 groups, layout)
+                                 groups, layout, langs)
     wanted = ([i for i in idx.values() if i is not None]
               + list(last_idx.values()))
     for attempt in range(3):            # Word fails transiently now and then
@@ -900,7 +889,7 @@ def _render(table, src_doc, lang, numbers, workdir, groups, layout, cancelled):
 LANG_LABEL = {"en": "English", "hi": "Hindi"}
 
 
-def _oversize_message(oversized):
+def _oversize_message(oversized, single=False):
     """Say WHICH question cannot be made to fit, and what to do about it.
 
     "did not converge - please report this file" told the user nothing they
@@ -917,14 +906,16 @@ def _oversize_message(oversized):
         langs = " and ".join(LANG_LABEL.get(l, l) for l in sorted(oversized[n]))
         bits.append(f"Q{n} ({langs})")
     which = "; ".join(bits)
-    return (f"These questions are taller than one page, so the booklet cannot "
-            f"keep Hindi and English on matching pages: {which}. "
+    why = ("cannot be printed whole" if single
+           else "cannot keep Hindi and English on matching pages")
+    return (f"These questions are taller than one page, so the booklet {why}: "
+            f"{which}. "
             f"Usually one of two things: the question really does carry a very "
             f"large table or image (shrink it in the source file), or the "
             f"question numbering slips there - a missing, repeated or "
             f"out-of-order number makes one question swallow the ones after "
-            f"it, so check the numbering around {which.split(' ')[0]} in both "
-            f"files.")
+            f"it, so check the numbering around {which.split(' ')[0]} in "
+            f"{'the file' if single else 'both files'}.")
 
 
 def _flow_height(e):
@@ -1051,6 +1042,10 @@ def measure_groups(en_by, hi_by, en_doc, hi_doc, numbers, workdir, cancelled,
                    progress=None):
     """Group questions into page pairs and set each column's leading.
 
+    A one-language booklet passes None for the other language's table and
+    document: the same planning then runs on that language alone, and a
+    "page pair" is simply a page.
+
     The official booklet keeps every question whole inside one column and
     tunes the leading column by column so that BOTH columns end at the page
     foot (Q41-42 at 329 beside Q43-45 at 250, ...). Same here, measured:
@@ -1074,7 +1069,12 @@ def measure_groups(en_by, hi_by, en_doc, hi_doc, numbers, workdir, cancelled,
     Returns (groups, layout) with layout[(group, lang)] = (split, lines).
     """
     os.makedirs(workdir, exist_ok=True)
-    sources = (("en", en_by, en_doc), ("hi", hi_by, hi_doc))
+    sources = tuple(s for s in (("en", en_by, en_doc), ("hi", hi_by, hi_doc))
+                    if s[1] is not None)
+    langs = tuple(l for l, _t, _d in sources)
+    # the probes are arranged like the booklet being made
+    booklet = ("hi", "en") if len(langs) > 1 else langs
+    single = len(langs) == 1
     n = len(numbers)
     oversized = {}
 
@@ -1096,7 +1096,7 @@ def measure_groups(en_by, hi_by, en_doc, hi_doc, numbers, workdir, cancelled,
             tick(f"Measuring {LANG_LABEL[lang]} questions", 60)
             lay = {gi: (None, spec) for gi in range(n)}
             hs[spec] = _render(table, src, lang, numbers, workdir, singles,
-                               lay, cancelled)
+                               lay, cancelled, booklet)
         base = hs[str(L_MIN)]
         for q, r in zip(numbers, base):
             if not r["first"] or r["last"] != r["first"]:
@@ -1134,7 +1134,7 @@ def measure_groups(en_by, hi_by, en_doc, hi_doc, numbers, workdir, cancelled,
                        "join": _join(lang, False), "joint": _join(lang, True),
                        "cap": cap, "cap_first": TARGET_BOTTOM - top_first}
     if oversized:
-        raise RuntimeError(_oversize_message(oversized))
+        raise RuntimeError(_oversize_message(oversized, single))
 
     # 2 + 3. Plan, render, correct. lo/hi bracket every column's leading
     # between the loosest verified to fit and the tightest seen to spill.
@@ -1143,7 +1143,7 @@ def measure_groups(en_by, hi_by, en_doc, hi_doc, numbers, workdir, cancelled,
     def start(pages):
         st = []
         for i, j, choice in pages:
-            for lang in ("en", "hi"):
+            for lang in langs:
                 split, Ls, slopes, tights = choice[lang]
                 st.append({"i": i, "j": j, "lang": lang, "split": split,
                            "slopes": slopes, "tight": tights,
@@ -1156,7 +1156,7 @@ def measure_groups(en_by, hi_by, en_doc, hi_doc, numbers, workdir, cancelled,
 
     pages = _plan_pages(model, n, banned)
     if pages is None:
-        raise RuntimeError(_oversize_message(oversized))
+        raise RuntimeError(_oversize_message(oversized, single))
     state = start(pages)
     for rnd in range(10):
         tick(f"Fitting columns (round {rnd + 1}, {len(pages)} page pairs)",
@@ -1168,7 +1168,7 @@ def measure_groups(en_by, hi_by, en_doc, hi_doc, numbers, workdir, cancelled,
             lay = {gi: (s["split"], specs(s, "try"))
                    for gi, s in enumerate(mine)}
             for s, r in zip(mine, _render(table, src, lang, numbers, workdir,
-                                          groups, lay, cancelled)):
+                                          groups, lay, cancelled, booklet)):
                 results[id(s)] = r
 
         failed, moving = set(), False
@@ -1246,10 +1246,10 @@ def measure_groups(en_by, hi_by, en_doc, hi_doc, numbers, workdir, cancelled,
             for q in numbers[i:j]:
                 gi = len(groups)
                 groups.append([q])
-                for lang in ("en", "hi"):
+                for lang in langs:
                     layout[(gi, lang)] = (None, [str(L_MIN)])
     if not groups or sum(len(g) for g in groups) != n:
-        raise RuntimeError(_oversize_message(oversized))
+        raise RuntimeError(_oversize_message(oversized, single))
     return groups, layout
 
 
@@ -1260,6 +1260,66 @@ QUESTION_SENTINEL = "[[QUESTIONS]]"
 # are the same in every booklet (product name, marks, instructions) stay.
 SAMPLE_TEST_NO = "08"
 SAMPLE_SUBJECT = "Indian Polity (Part II)"
+# The rest of the sample's identity, printed on the English and the Hindi
+# cover alike. Each is rewritten only when the form supplies the value.
+SAMPLE_SERIES = "Prelims Test Series 1.0"          # cover, line 1
+SAMPLE_BAND_SERIES = "Prelims Test Series - 2027"  # title band over the questions
+SAMPLE_TYPE = "Full Length Test"
+TARGET_RE = re.compile(r"^TARGET\s*[-–—]\s*20\d\d$")
+# 'Time: 120 Hours<tab>Total Marks: 200' / 'समय: 120 मिनट<tab>पूर्णांक: 200'
+TIME_EN_RE = re.compile(r"^Time\s*:.*Total Marks\s*:", re.S)
+TIME_HI_RE = re.compile(r"^समय\s*:.*पूर्णांक\s*:", re.S)
+# instruction 2: 'Each Question carries two marks.' / '... के लिए दो अंक हैं।'
+# - the number word is a bold run of its own in both languages
+EN_NUMBER_WORDS = ["zero", "one", "two", "three", "four", "five", "six",
+                   "seven", "eight", "nine", "ten"]
+HI_NUMBER_WORDS = ["शून्य", "एक", "दो", "तीन", "चार", "पाँच", "छह", "सात",
+                   "आठ", "नौ", "दस"]
+
+
+def _number_word(value, words):
+    """'2' -> 'two'; beyond ten, or a fraction like 2.5, stays in digits."""
+    n = float(value)
+    return words[int(n)] if n.is_integer() and n < len(words) else value
+
+
+def _set_marks_per_question(p_el, text, per):
+    """Rewrite the marks-per-question sentence of instruction 2, keeping the
+    bold run the number sits in. Returns True when the paragraph was it."""
+    runs = p_el.findall(qn('w:r'))
+
+    def t_of(r):
+        return "".join(t.text or "" for t in r.findall(qn('w:t')))
+
+    def set_t(r, value):
+        ts = r.findall(qn('w:t'))
+        ts[0].text = value
+        ts[0].set(qn('xml:space'), 'preserve')
+        for t in ts[1:]:
+            t.text = ""
+
+    one = float(per) == 1
+    if "Each Question carries" in text:
+        # the sentence's own number - 'equal marks.' earlier is bold too
+        lead = next(i for i, r in enumerate(runs)
+                    if "Each Question carries" in t_of(r))
+        for r in runs[lead + 1:]:
+            if re.fullmatch(r"\s*\S+ marks?\.\s*", t_of(r)):
+                word = _number_word(per, EN_NUMBER_WORDS)
+                set_t(r, f" {word} mark{'' if one else 's'}.")
+                return True
+    elif "प्रत्येक प्रश्न के लिए" in text:
+        # the last 'अंक' - the first is 'सभी प्रश्नों के अंक समान हैं'
+        for i in range(len(runs) - 1, 1, -1):
+            r = runs[i]
+            if t_of(r).strip() == "अंक":
+                # 'लिए', ' ', '<number>', ' ', 'अंक', ' ', 'हैं।'
+                set_t(runs[i - 2], _number_word(per, HI_NUMBER_WORDS))
+                for later in runs[i + 1:]:
+                    if t_of(later).strip() in ("हैं।", "है।"):
+                        set_t(later, "है।" if one else "हैं।")
+                return True
+    return False
 # '_' counts as a word character, so \b never fires in 'Test 08_Q_...'
 TEST_NO_RE = re.compile(r"(?<![A-Za-z0-9])test\s*[-–—:]?\s*0*(\d{1,2})(?!\d)", re.I)
 
@@ -1322,6 +1382,85 @@ def _break_before_back_matter(sentinel):
         return
 
 
+def _has_sect(el):
+    ppr = el.find(qn('w:pPr')) if el.tag == qn('w:p') else None
+    return ppr is not None and ppr.find(qn('w:sectPr')) is not None
+
+
+def _drop_back_matter(doc, sentinel):
+    """Remove the closing Hindi cover + instructions.
+
+    The questions' own two-column section becomes the document's last one:
+    its section-break paragraph (the first after the sentinel) gives its
+    sectPr to the body, and every page after it goes. Returns the Hindi
+    paragraphs that were taken out, in order, for `_arrange` to reuse.
+    """
+    body = doc.element.body
+    close = next(el for el in sentinel.itersiblings() if _has_sect(el))
+    taken = []
+    for el in list(close.itersiblings()):
+        if el.tag == qn('w:sectPr'):
+            continue
+        if el.tag == qn('w:p'):
+            if not _has_sect(el):
+                taken.append(el)
+            body.remove(el)
+    sect = close.find(qn('w:pPr')).find(qn('w:sectPr'))
+    body.replace(body.find(qn('w:sectPr')), sect)   # moves it out of `close`
+    body.remove(close)
+    return taken
+
+
+def _arrange(doc, langs):
+    """Shape the bilingual template for the booklet being made.
+
+    Bilingual (('hi', 'en')): as it is - English cover + instructions, title
+    band, questions, Hindi cover + instructions on the closing page.
+    English: the same without the closing Hindi page.
+    Hindi: the Hindi cover + instructions take the English ones' place on
+    page 1, in the same three continuous sections (cover / instructions /
+    mail line), so page 1 and the band page lay out as in the bilingual one.
+    """
+    if len(langs) > 1:
+        return
+    sentinel = _find_sentinel(doc)
+    if sentinel is None:
+        return
+    hindi = _drop_back_matter(doc, sentinel)
+    if langs != ("hi",):
+        return
+
+    def text(el):
+        return "".join(t.text or "" for t in el.iter(qn('w:t'))).strip()
+
+    body = doc.element.body
+    front = []
+    for el in body:
+        if el.tag == qn('w:p') and any(b.get(qn('w:type')) == 'page'
+                                       for b in el.iter(qn('w:br'))):
+            page_turn = el              # page 1 ends here; the band follows
+            break
+        front.append(el)
+    breaks = [el for el in front if _has_sect(el)]      # cover | instructions
+    for el in front:
+        if el.tag == qn('w:p') and not _has_sect(el):
+            body.remove(el)
+    instr = next(i for i, p in enumerate(hindi) if text(p) == "अनुदेश")
+    mail = next(i for i, p in enumerate(hindi)
+                if text(p).startswith("If you have any queries"))
+    for part, before in ((hindi[:instr], breaks[0]),
+                         (hindi[instr:mail], breaks[1]),
+                         (hindi[mail:], page_turn)):
+        for p in part:
+            before.addprevious(p)
+
+
+def _open_booklet(langs):
+    out = dt.open_template(TEMPLATE)
+    _arrange(out, tuple(langs))
+    return out
+
+
 def _find_sentinel(doc):
     for p in doc.element.body.findall(qn('w:p')):
         if "".join(t.text or "" for t in p.iter(qn('w:t'))).strip() == QUESTION_SENTINEL:
@@ -1366,20 +1505,41 @@ def _set_para_text(p_el, text):
     return True
 
 
-def _fill_test_identity(doc, source_path, notes):
-    """Rewrite the sample's test number / subject in the front & back matter.
+def _set_tabbed_text(p_el, left, right):
+    """Replace the words either side of a paragraph's tab, keeping the tab
+    (the time / marks line is one paragraph with a right tab stop) and the
+    first run's formatting on each side."""
+    side = 0
+    first = [True, True]
+    # runs only: the pPr's tab-stop list is made of w:tab elements too
+    for el in (c for r in p_el.findall(qn('w:r'))
+               for c in r if c.tag in (qn('w:t'), qn('w:tab'))):
+        if el.tag == qn('w:tab'):
+            side = 1
+            continue
+        el.text = (left, right)[side] if first[side] else ""
+        el.set(qn('xml:space'), 'preserve')
+        first[side] = False
+    return side == 1
 
-    Both come from the input file name when it carries them (production files
-    are named like 'Test 08_Q_PTS 2708_Indian Polity Part II_...'); otherwise
-    an obvious placeholder is left and reported, because the raw question
-    paper itself does not name the test.
+
+def _fill_test_identity(doc, source_path, notes, details=None):
+    """Rewrite the sample's identity in the front & back matter.
+
+    Values typed on the form (`details`: series, type, subject, marks, time,
+    year) win. Otherwise the test number and subject come from the input file
+    name when it carries them (production files are named like
+    'Test 08_Q_PTS 2708_Indian Polity Part II_...') or an obvious placeholder
+    is left and reported - the raw question paper does not name the test -
+    and the rest keeps the template's text.
     """
+    details = details or {}
     stem = os.path.splitext(os.path.basename(source_path))[0]
     m = TEST_NO_RE.search(stem)
-    test_no = m.group(1).zfill(2) if m else None
-    subject = None
+    test_no = details.get("testno") or (m.group(1).zfill(2) if m else None)
+    subject = details.get("subject")
     parts = [p.strip() for p in re.split(r"[_|]", stem) if p.strip()]
-    for i, part in enumerate(parts):
+    for i, part in enumerate(parts if subject is None else []):
         if TEST_NO_RE.fullmatch(part) and i + 2 < len(parts):
             cand = parts[i + 2]           # Test 08 | A | PTS 2708 | <subject>
             if len(cand) > 4 and not re.fullmatch(r"[A-Z]{2,5}\s*\d{3,5}", cand):
@@ -1392,7 +1552,7 @@ def _fill_test_identity(doc, source_path, notes):
                 subject = part
                 break
 
-    if subject:
+    if subject and not details.get("subject"):
         # file names flatten the published '(Part II)' to 'Part II' - same
         # rule as the answer booklet's title line
         subject = re.sub(r"\s+part\s+([IVX0-9]+)\s*$", r" (Part \1)", subject,
@@ -1406,6 +1566,14 @@ def _fill_test_identity(doc, source_path, notes):
         subject = "[SUBJECT]"
         missing.append("subject")
 
+    from .prelims_ab import series_line
+    series = details.get("series")
+    year = details.get("year")
+    kind = details.get("type")
+    time_ = details.get("time")
+    marks = details.get("marks")
+    per = details.get("permark")
+
     changed = 0
     for p in doc.element.body.findall(qn('w:p')):
         text = "".join(t.text or "" for t in p.iter(qn('w:t'))).strip()
@@ -1417,22 +1585,59 @@ def _fill_test_identity(doc, source_path, notes):
             new = new.replace(SAMPLE_SUBJECT, subject)
         elif text == SAMPLE_SUBJECT:
             new = subject
+        elif text == SAMPLE_SERIES and series:
+            new = series
+        elif text == SAMPLE_BAND_SERIES:
+            new = series_line(details, default=SAMPLE_BAND_SERIES, sep=" - ")
+        elif text == SAMPLE_TYPE and kind:
+            new = f"{kind} Test"
+        elif TARGET_RE.match(text) and year:
+            new = re.sub(r"20\d\d", year, text)
+        elif per and ("Each Question carries" in text
+                      or "प्रत्येक प्रश्न के लिए" in text):
+            if _set_marks_per_question(p, text, per):
+                changed += 1
+            continue
+        elif (time_ or marks) and (TIME_EN_RE.match(text) or TIME_HI_RE.match(text)):
+            t = time_ or re.search(r":\s*(\d+)", text).group(1)
+            mk = marks or re.search(r"(\d+)\s*$", text).group(1)
+            if TIME_EN_RE.match(text):
+                # the sample reads '120 Hours' - the paper is 120 minutes
+                left, right = f"Time: {t} Minutes", f"Total Marks: {mk}"
+            else:
+                left, right = f"समय: {t} मिनट", f"पूर्णांक: {mk}"
+            if _set_tabbed_text(p, left, right):
+                changed += 1
+            continue
         if new and new != text and _set_para_text(p, new):
             changed += 1
     if missing:
         notes.append("Cover and title lines: " + " and ".join(missing) +
-                     " not found in the file name, left as a placeholder to "
+                     " not typed and not found in the file name, left as a placeholder to "
                      "type over (the raw paper does not name the test).")
     elif changed:
         notes.append(f"Cover and title lines set to Test {test_no}: {subject} "
-                     f"(read from the file name).")
+                     + ("(subject as typed)." if details.get("subject")
+                        else "(read from the file name)."))
+    typed = [label for key, label in (("series", "series name"),
+                                      ("type", "test type"),
+                                      ("marks", "total marks"),
+                                      ("permark", "marks per question"),
+                                      ("time", "time"), ("year", "target year"))
+             if details.get(key)]
+    if typed:
+        notes.append("Cover set from the form: " + ", ".join(typed) + ".")
     return changed
 
 
 def build(en_path, hi_path, out_path, start_page=None, end_page=None,
-          progress=lambda s, p: None, cancelled=lambda: False):
-
+          progress=lambda s, p: None, cancelled=lambda: False, details=None):
+    """Bilingual with both papers; an English or Hindi booklet when only
+    that paper is given (the other path None)."""
     notes = []
+    details = details or {}
+    langs = tuple(l for l, p in (("hi", hi_path), ("en", en_path)) if p)
+    single = len(langs) == 1
 
     def read(path, label, pct):
         """Read questions, honouring the page range but never losing content.
@@ -1447,7 +1652,7 @@ def build(en_path, hi_path, out_path, start_page=None, end_page=None,
         doc, blocks = dt.slice_blocks(path, start_page=start_page,
                                       end_page=end_page, cancelled=cancelled)
         found = split_questions(blocks)
-        if start_page or end_page:
+        if (start_page or end_page) and not single:
             full_doc, all_blocks = dt.slice_blocks(path, cancelled=cancelled)
             full = split_questions(all_blocks)
             if len(full) > len(found):
@@ -1458,27 +1663,34 @@ def build(en_path, hi_path, out_path, start_page=None, end_page=None,
                 return full_doc, full
         return doc, found
 
-    en_doc, en = read(en_path, "English", 12)
-    hi_doc, hi = read(hi_path, "Hindi", 28)
+    en_doc, en = read(en_path, "English", 12) if en_path else (None, None)
+    hi_doc, hi = read(hi_path, "Hindi", 28) if hi_path else (None, None)
     if cancelled():
         raise InterruptedError("stopped")
 
     progress("Matching questions", 45)
-    if not en or not hi:
+    if single:
+        if not (en or hi):
+            raise ValueError("Could not find numbered questions in the file. "
+                             "Check the start/end pages.")
+    elif not en or not hi:
         raise ValueError("Could not find numbered questions in one of the files. "
                          "Check the start/end pages.")
 
-    en_by = {q["no"]: q for q in en}
-    hi_by = {q["no"]: q for q in hi}
-    numbers = sorted(set(en_by) & set(hi_by))
-    only_en = sorted(set(en_by) - set(hi_by))
-    only_hi = sorted(set(hi_by) - set(en_by))
-    if only_en:
-        notes.append("Missing from the Hindi file: " + ", ".join(f"Q{n}" for n in only_en))
-    if only_hi:
-        notes.append("Missing from the English file: " + ", ".join(f"Q{n}" for n in only_hi))
-    if not numbers:
-        raise ValueError("The two files share no question numbers.")
+    en_by = {q["no"]: q for q in en} if en_path else None
+    hi_by = {q["no"]: q for q in hi} if hi_path else None
+    if single:
+        numbers = sorted(en_by or hi_by)
+    else:
+        numbers = sorted(set(en_by) & set(hi_by))
+        only_en = sorted(set(en_by) - set(hi_by))
+        only_hi = sorted(set(hi_by) - set(en_by))
+        if only_en:
+            notes.append("Missing from the Hindi file: " + ", ".join(f"Q{n}" for n in only_en))
+        if only_hi:
+            notes.append("Missing from the English file: " + ", ".join(f"Q{n}" for n in only_hi))
+        if not numbers:
+            raise ValueError("The two files share no question numbers.")
 
     progress("Measuring page fit", 60)
     groups, layout = measure_groups(en_by, hi_by, en_doc, hi_doc, numbers,
@@ -1486,12 +1698,13 @@ def build(en_path, hi_path, out_path, start_page=None, end_page=None,
                                       cancelled, progress)
 
     progress("Building booklet", 75)
-    out = dt.open_template(TEMPLATE)
+    out = _open_booklet(langs)
+    source = en_path or hi_path
     # The template's page header still carries the sample's own code
     # ("PTS 2708"), so Test 13 printed Test 08's code on 43 of 44 pages. Same
     # rule as the answer booklet: the code from the file name, else [CODE].
     from .prelims_ab import _replace_header_code
-    _replace_header_code(out, en_path, notes)
+    _replace_header_code(out, source, notes, typed=details.get("code"))
 
     # The template keeps the official front matter (English cover + Test
     # Instructions + title band) and back matter (the same in Hindi); the
@@ -1500,19 +1713,23 @@ def build(en_path, hi_path, out_path, start_page=None, end_page=None,
     if tail is None:                     # template without front matter
         anchors = dt.clear_body_keep_sections(out)
         place = anchors[0] if anchors else out.element.body.find(qn('w:sectPr'))
-        _title_line(out, "[TEST SERIES]", place, size_half=40)
-        _title_line(out, "[TEST NAME]", place, size_half=36)
+        _title_line(out, details.get("series") or "[TEST SERIES]", place,
+                    size_half=40)
+        _title_line(out, details.get("subject") or "[TEST NAME]", place,
+                    size_half=36)
         notes.append("Title lines are placeholders - the raw files have no "
                      "test series or test name.")
         tail = out.element.body.find(qn('w:sectPr'))
     else:
-        _fill_test_identity(out, en_path, notes)
+        _fill_test_identity(out, source, notes, details)
 
     first_block = True
     for gi, group in enumerate(groups):
         if cancelled():
             raise InterruptedError("stopped")
         for lang, table, src in (("hi", hi_by, hi_doc), ("en", en_by, en_doc)):
+            if table is None:
+                continue
             # each language keeps the column split and the per-column
             # leading its own pages were measured at
             split, line = layout.get((gi, lang), (None, "259"))
@@ -1528,27 +1745,46 @@ def build(en_path, hi_path, out_path, start_page=None, end_page=None,
 
     progress("Saving", 90)
     out.save(out_path)
+    # the cover's total should be questions x marks each; say so if not
+    total, per = details.get("marks"), details.get("permark")
+    if total and per and abs(float(total) - len(numbers) * float(per)) > 1e-6:
+        notes.append(f"Check the marks: {len(numbers)} questions x {per} = "
+                     f"{len(numbers) * float(per):g}, but Total marks says {total}.")
     sizes = sorted({len(g) for g in groups})
-    notes.insert(0, f"{len(numbers)} questions in Hindi and English across "
-                    f"{len(groups)} page pairs ({min(sizes)}-{max(sizes)} questions "
-                    f"per page, each question whole in one column, line spacing "
-                    f"set per column so both columns reach the page foot).")
+    if single:
+        notes.insert(0, f"{len(numbers)} questions in {LANG_LABEL[langs[0]]} on "
+                        f"{len(groups)} pages ({min(sizes)}-{max(sizes)} questions "
+                        f"per page, each question whole in one column, line "
+                        f"spacing set per column so both columns reach the page "
+                        f"foot).")
+    else:
+        notes.insert(0, f"{len(numbers)} questions in Hindi and English across "
+                        f"{len(groups)} page pairs ({min(sizes)}-{max(sizes)} questions "
+                        f"per page, each question whole in one column, line spacing "
+                        f"set per column so both columns reach the page foot).")
     return out_path, notes
 
 
 def process(input_path, workdir, variant="Bilingual", start_page=None, end_page=None,
             second_path=None, progress=lambda s, p: None,
-            cancelled=lambda: False, **kw):
-    """input_path = English file, second_path = Hindi file."""
-    if not second_path:
-        raise ValueError("This category needs two files: the English paper and "
-                         "the Hindi paper.")
+            cancelled=lambda: False, details=None, **kw):
+    """Bilingual: input_path = English file, second_path = Hindi file.
+    English / Hindi: input_path is that language's paper."""
+    if variant == "English":
+        en_path, hi_path = input_path, None
+    elif variant == "Hindi":
+        en_path, hi_path = None, input_path
+    else:
+        if not second_path:
+            raise ValueError("This category needs two files: the English paper "
+                             "and the Hindi paper.")
+        en_path, hi_path = input_path, second_path
     os.makedirs(workdir, exist_ok=True)
     stem = os.path.splitext(os.path.basename(input_path))[0]
-    out_path = os.path.join(workdir, f"{stem}_Question Booklet_Bilingual.docx")
-    _, notes = build(input_path, second_path, out_path,
+    out_path = os.path.join(workdir, f"{stem}_Question Booklet_{variant}.docx")
+    _, notes = build(en_path, hi_path, out_path,
                      start_page=start_page, end_page=end_page,
-                     progress=progress, cancelled=cancelled)
+                     progress=progress, cancelled=cancelled, details=details)
 
     # PDF companion beside the DOCX, same stem: the UI offers both downloads
     # (for this category the PDF is what the client actually prints)

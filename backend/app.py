@@ -12,13 +12,14 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import fonts as _fonts
+from . import updater, version
 from .categories import CATEGORIES, get_category
 from .jobs import manager, Job, WORK
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FRONTEND_DIST = os.path.join(ROOT, "frontend", "dist")
 
-app = FastAPI(title="DocPilot", version="2.0")
+app = FastAPI(title="DocPilot", version=version.VERSION)
 
 
 @app.on_event("startup")
@@ -65,7 +66,16 @@ async def create_job(category_id: str = Form(...),
                      cover_index: str = Form(None),
                      cover_shorts: str = Form(None),
                      cover_qr: str = Form(None),
-                     cover_index2: str = Form(None)):
+                     cover_index2: str = Form(None),
+                     ts_series: str = Form(None),
+                     ts_testno: str = Form(None),
+                     ts_type: str = Form(None),
+                     ts_subject: str = Form(None),
+                     ts_code: str = Form(None),
+                     ts_marks: str = Form(None),
+                     ts_permark: str = Form(None),
+                     ts_time: str = Form(None),
+                     ts_year: str = Form(None)):
     cat = get_category(category_id)
     if cat is None:
         raise HTTPException(400, "Unknown category")
@@ -108,9 +118,42 @@ async def create_job(category_id: str = Form(...),
                  "qr": (cover_qr or "").strip(),
                  "index2": (cover_index2 or "").strip()}
 
+    # Test Series details typed on the form; empty = file name / template
+    details = {}
+    if cat.get("test_fields"):
+        typed = {"series": ts_series, "testno": ts_testno,
+                 "type": ts_type, "subject": ts_subject,
+                 "code": ts_code, "marks": ts_marks, "permark": ts_permark,
+                 "time": ts_time,
+                 "year": ts_year}
+        details = {k: " ".join((v or "").split()) for k, v in typed.items()
+                   if k in cat["test_fields"] and (v or "").strip()}
+        for key, label in (("marks", "Total marks"), ("time", "Time")):
+            if key in details:
+                as_page(details[key], label)       # whole number, 1 or more
+                details[key] = str(int(details[key]))
+        if "permark" in details:
+            # whole or half marks: 2, 1, 2.5
+            if not re.fullmatch(r"\d{1,2}(\.\d)?", details["permark"]) \
+                    or float(details["permark"]) == 0:
+                raise HTTPException(400, "Marks per question must be a number "
+                                         "like 2 or 2.5")
+            details["permark"] = f"{float(details['permark']):g}"
+        if "testno" in details:
+            if not re.fullmatch(r"\d{1,3}", details["testno"]):
+                raise HTTPException(400, "Test number must be a number like 08")
+            details["testno"] = details["testno"].zfill(2)
+        if "year" in details and not re.fullmatch(r"20\d\d", details["year"]):
+            raise HTTPException(400, "Target year must be a year like 2027")
+        if details.get("type") not in (None, "Sectional", "Full Length"):
+            raise HTTPException(400, "Test series type must be Sectional or "
+                                     "Full Length")
+        if "code" in details:
+            details["code"] = details["code"].upper()
+
     if file is not None:
         job = Job(category_id, "upload", "", "", start_page=sp, end_page=ep,
-                  cover=cover)
+                  cover=cover, details=details)
         job_dir = os.path.join(WORK, job.id)
         name, path = _save_upload(job_dir, file, await file.read())
         job.display_name, job.source = name, path
@@ -119,7 +162,7 @@ async def create_job(category_id: str = Form(...),
             job.display_name2, job.source2 = name2, path2
     else:
         job = Job(category_id, "link", link.strip(), "link",
-                  start_page=sp, end_page=ep, cover=cover)
+                  start_page=sp, end_page=ep, cover=cover, details=details)
         if needs_two and link2:
             job.source2 = link2.strip()
             job.display_name2 = "link"
@@ -165,9 +208,54 @@ def download(job_id: str, fmt: str = ""):
     return FileResponse(path, media_type=media, filename=name)
 
 
+# ------------------------------------------------------------------ updates
+@app.get("/api/update")
+def update_check():
+    """Current version, and whether the Drive manifest offers a newer one."""
+    return updater.check()
+
+
+@app.get("/api/update/status")
+def update_status():
+    return updater.status()
+
+
+@app.post("/api/update/download")
+def update_download():
+    try:
+        updater.start_download()
+    except updater.UpdateError as e:
+        raise HTTPException(400, str(e))
+    return updater.status()
+
+
+@app.post("/api/update/install")
+def update_install():
+    busy = [j for j in manager.list() if j["status"] in ("queued", "running")]
+    if busy:
+        raise HTTPException(409, f"{len(busy)} job(s) still running or queued - "
+                                 "let them finish (or stop them), then install.")
+    try:
+        updater.install()
+    except updater.UpdateError as e:
+        raise HTTPException(400, str(e))
+    return {"state": "installing"}
+
+
 @app.exception_handler(Exception)
 async def unhandled(request, exc):
     return JSONResponse(status_code=500, content={"detail": str(exc)})
+
+
+@app.middleware("http")
+async def fresh_page(request, call_next):
+    """The page itself is never cached: a browser holding yesterday's
+    index.html keeps loading the old form (its scripts are hash-named, so
+    they need no such rule) and silently drops the fields added since."""
+    response = await call_next(request)
+    if request.url.path in ("/", "/index.html"):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
 
 
 if os.path.isdir(FRONTEND_DIST):

@@ -102,6 +102,30 @@ body {
   background: var(--accent-soft); border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
   padding: 5px 12px; border-radius: 999px;
 }
+.update-btn {
+  font: inherit; font-size: 13px; font-weight: 700; color: #fff; cursor: pointer;
+  background: linear-gradient(135deg, #17a34a, #0f8a3c); border: 0;
+  padding: 8px 14px; border-radius: 999px; box-shadow: var(--shadow);
+  transition: transform 0.15s ease, opacity 0.2s;
+}
+.update-btn:hover:not(:disabled) { transform: translateY(-1px); }
+.update-btn:disabled { opacity: 0.75; cursor: progress; }
+.version-tag {
+  font: inherit; font-size: 12px; color: var(--muted); cursor: pointer;
+  background: none; border: 0; padding: 4px 2px;
+}
+.version-tag:hover { color: var(--accent); text-decoration: underline; }
+.update-overlay {
+  position: fixed; inset: 0; z-index: 100; display: grid; place-items: center;
+  padding: 16px; background: color-mix(in srgb, var(--bg, #000) 70%, transparent);
+  backdrop-filter: blur(6px);
+}
+.update-card {
+  max-width: 420px; text-align: center; padding: 28px 26px; border-radius: 18px;
+  background: var(--surface); border: 1px solid var(--border); box-shadow: var(--shadow);
+  display: flex; flex-direction: column; align-items: center; gap: 12px;
+}
+.update-card p { color: var(--muted); font-size: 14px; line-height: 1.5; }
 .theme-btn {
   width: 40px; height: 40px; border-radius: 12px; border: 1px solid var(--border);
   background: var(--surface); color: var(--text); font-size: 17px; cursor: pointer;
@@ -226,6 +250,9 @@ option:disabled { color: color-mix(in srgb, var(--muted) 60%, transparent); }
 .coverbox-head span { font-size: 12px; font-weight: 700; letter-spacing: 0.8px; text-transform: uppercase; color: var(--accent); }
 .coverbox-head small { font-size: 12px; color: var(--muted); }
 .coverbox .pagefield { margin-bottom: 6px; }
+.coverbox .pagerow { margin-bottom: 0; }
+.ts-select { margin-bottom: 0; }
+.ts-select select { padding: 9px 40px 9px 11px; border-radius: 11px; }
 .slot-label {
   font-size: 12px; font-weight: 700; letter-spacing: 0.6px; text-transform: uppercase;
   color: var(--accent); margin: 4px 0 7px;

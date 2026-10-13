@@ -4,14 +4,20 @@
     python tools/build_installer.py            # icon + app bundle + installer
     python tools/build_installer.py --skip-app # installer only, reuse dist/
 
-Leaves the finished setup at dist/DocPilot-Setup-2.0-beta.exe.
+Leaves the finished setup at dist/DocPilot-Setup-<version>.exe and prints the
+lines to paste into the update notice on Drive (see backend/updater.py).
+The version comes from backend/version.py - bump it there first.
 """
+import hashlib
 import os
 import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-BUNDLE = os.path.join(ROOT, "dist", "DocPilot-2.0-beta")
+sys.path.insert(0, ROOT)
+from backend.version import LABEL, VERSION  # noqa: E402
+
+BUNDLE = os.path.join(ROOT, "dist", f"DocPilot-{LABEL}")
 
 # Inno Setup installs per-user or machine-wide depending on who ran it, so
 # look in both before giving up
@@ -49,13 +55,24 @@ def main():
     if not os.path.isdir(BUNDLE):
         sys.exit(f"app bundle missing: {BUNDLE}\nrun without --skip-app first")
 
-    run([find_iscc(), "installer/DocPilot.iss"])
+    num = ".".join((VERSION.split(".") + ["0", "0", "0"])[:4])
+    run([find_iscc(), f"/DAppVersion={LABEL}", f"/DAppVersionNum={num}",
+         "installer/DocPilot.iss"])
 
-    setup = os.path.join(ROOT, "dist", "DocPilot-Setup-2.0-beta.exe")
-    if os.path.isfile(setup):
-        print(f"\nOK  {setup}  ({os.path.getsize(setup) / 1e6:.0f} MB)")
-    else:
+    setup = os.path.join(ROOT, "dist", f"DocPilot-Setup-{LABEL}.exe")
+    if not os.path.isfile(setup):
         sys.exit("compiler reported success but the setup exe is missing")
+    sha = hashlib.sha256()
+    with open(setup, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            sha.update(chunk)
+    print(f"\nOK  {setup}  ({os.path.getsize(setup) / 1e6:.0f} MB)")
+    print("\nTo publish: upload that file to Drive, share it as 'Anyone with the "
+          "link can view',\nthen set the update notice (Google Doc) to:\n")
+    print(f"version: {VERSION}")
+    print("installer: <the uploaded file's Drive link>")
+    print(f"sha256: {sha.hexdigest()}")
+    print("notes: <what is new, one line each>")
 
 
 if __name__ == "__main__":

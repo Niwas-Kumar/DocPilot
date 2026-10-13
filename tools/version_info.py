@@ -5,10 +5,15 @@ Explorer's Properties > Details tab and Add/Remove Programs both read this;
 without it the exe shows blank publisher fields and looks unsigned junk.
 """
 import os
+import sys
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
+from backend.version import LABEL, VERSION as _VERSION, parse  # noqa: E402
 
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "file_version.txt")
-VERSION = (2, 0, 0, 0)
-DISPLAY = "2.0-beta"
+VERSION = (parse(_VERSION) + (0, 0, 0, 0))[:4]
+DISPLAY = LABEL
 
 TEMPLATE = """VSVersionInfo(
   ffi=FixedFileInfo(

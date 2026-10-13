@@ -53,7 +53,7 @@ def _pipeline(name):
 class Job:
     def __init__(self, category_id, source_kind, source, display_name,
                  start_page=None, end_page=None, source2=None, display_name2=None,
-                 cover=None):
+                 cover=None, details=None):
         self.id = uuid.uuid4().hex[:12]
         self.category_id = category_id
         self.source_kind = source_kind        # 'upload' | 'link'
@@ -64,6 +64,7 @@ class Job:
         self.start_page = start_page
         self.end_page = end_page
         self.cover = cover or {}              # {'date','index','shorts','qr','index2'} strings
+        self.details = details or {}          # Test Series: {'series','type','subject','code','marks','time','year'}
         self.status = "queued"                # queued|running|done|error|stopped
         self.stage = "Waiting in queue"
         self.progress = 0
@@ -249,6 +250,7 @@ class JobManager:
                 "cover_shorts": job.cover.get("shorts"),
                 "cover_qr": job.cover.get("qr"),
                 "cover_index2": job.cover.get("index2"),
+                "details": job.details,
             }
             import inspect
             sig = inspect.signature(mod.process)

@@ -9,6 +9,14 @@ const api = {
     return r.json()
   }),
   stop: (id) => fetch(`/api/jobs/${id}/stop`, { method: 'POST' }),
+  updateCheck: () => fetch('/api/update').then(r => r.json()),
+  updateStatus: () => fetch('/api/update/status').then(r => r.json()),
+  updatePost: async (url) => {
+    const r = await fetch(url, { method: 'POST' })
+    const body = await r.json().catch(() => ({}))
+    if (!r.ok) throw new Error(body.detail || 'Update failed')
+    return body
+  },
   remove: (id) => fetch(`/api/jobs/${id}`, { method: 'DELETE' }),
 }
 
@@ -61,10 +69,15 @@ export default function App() {
   const [coverShorts, setCoverShorts] = useState('')
   const [coverQr, setCoverQr] = useState('')
   const [coverIndex2, setCoverIndex2] = useState('')
+  // Test Series details: { series, type, testno, subject, code, marks, permark, time, year }
+  const [details, setDetails] = useState({})
   const [jobs, setJobs] = useState([])
   const [busy, setBusy] = useState(false)
   const [toasts, setToasts] = useState([])
   const [dragOver, setDragOver] = useState(false)
+  // in-app update: what /api/update said, and the download / install step
+  const [update, setUpdate] = useState(null)
+  const [upd, setUpd] = useState({ state: 'idle', progress: 0 })
   const fileInput = useRef(null)
   const fileInput2 = useRef(null)
 
@@ -113,6 +126,14 @@ export default function App() {
   // the two file slots' names (the bilingual Test Series default)
   const slots = cat?.slots || ['English paper', 'हिंदी paper']
   const isPair = !!cat?.slots
+  // which Test Series details this category prints (Prelims only)
+  const testFields = cat?.test_fields || []
+  const hasTest = (f) => testFields.includes(f)
+  const setDetail = (key) => (e) => setDetails(d => ({ ...d, [key]: e.target.value }))
+  // year / marks / time: plain text boxes that keep digits only - a number
+  // box jumps to its min on a stray arrow key or mouse-wheel scroll
+  const setDigits = (key) => (e) => setDetails(d => ({ ...d, [key]: e.target.value.replace(/\D/g, '') }))
+  const setDecimal = (key) => (e) => setDetails(d => ({ ...d, [key]: e.target.value.replace(/[^\d.]/g, '') }))
 
   const addTo = useCallback((setter) => (list) => {
     const ok = [], bad = []
@@ -128,6 +149,7 @@ export default function App() {
   useEffect(() => {
     setStartPage(''); setEndPage(''); setFiles2([]); setLink2('')
     setCoverDate(''); setCoverIndex(''); setCoverShorts(''); setCoverQr(''); setCoverIndex2('')
+    setDetails({})
   }, [category])
 
   const addPageFields = (form) => {
@@ -141,6 +163,11 @@ export default function App() {
       if (coverQr.trim() && hasField('qr')) form.append('cover_qr', coverQr.trim())
       if (coverIndex2.trim() && hasField('index2')) form.append('cover_index2', coverIndex2)
     }
+    // Test Series details: an empty one keeps the file name / template value
+    for (const f of testFields) {
+      const v = (details[f] || '').trim()
+      if (v) form.append(`ts_${f}`, v)
+    }
   }
 
   const submit = async () => {
@@ -150,6 +177,9 @@ export default function App() {
     }
     if (dateRequired && !coverDate.trim()) {
       return toast('Enter the front-page date (e.g. 17 August 2026)', 'error')
+    }
+    if (hasTest('year') && details.year?.trim() && !/^20\d\d$/.test(details.year.trim())) {
+      return toast('Target year must be a year like 2027', 'error')
     }
     setBusy(true)
     try {
@@ -205,6 +235,57 @@ export default function App() {
     }
   }
 
+  // ---- updates: checked once on open; the button appears only when the
+  // Drive notice offers a newer version
+  useEffect(() => {
+    api.updateCheck().then(setUpdate).catch(() => {})
+  }, [])
+
+  const recheck = async () => {
+    try {
+      const u = await api.updateCheck()
+      setUpdate(u)
+      if (u.error) toast(u.error, 'error')
+      else if (!u.configured) toast('Updates are not set up in this build', 'error')
+      else if (!u.available) toast(`DocPilot ${u.current} is the latest version ✓`, 'ok')
+    } catch { toast('Cannot reach the DocPilot backend', 'error') }
+  }
+
+  const installUpdate = async () => {
+    try {
+      await api.updatePost('/api/update/install')
+      setUpd({ state: 'installing', progress: 100 })
+    } catch (e) {
+      setUpd(u => ({ ...u, state: 'ready' }))
+      toast(e.message, 'error')
+    }
+  }
+
+  const startUpdate = async () => {
+    if (upd.state === 'ready') return installUpdate()
+    const notes = update?.notes ? `\n\nWhat's new:\n${update.notes}` : ''
+    if (!window.confirm(`Update DocPilot ${update.current} → ${update.latest}?${notes}\n\n` +
+        'The new version is downloaded first. DocPilot then closes, installs it ' +
+        'and opens again by itself (about a minute).')) return
+    try {
+      setUpd(await api.updatePost('/api/update/download'))
+    } catch (e) { toast(e.message, 'error') }
+  }
+
+  // follow the download; install as soon as it is complete
+  useEffect(() => {
+    if (upd.state !== 'downloading') return
+    const iv = setInterval(async () => {
+      try {
+        const s = await api.updateStatus()
+        setUpd(s)
+        if (s.state === 'error') toast(s.error || 'Update download failed', 'error')
+        if (s.state === 'ready') installUpdate()
+      } catch { /* backend busy */ }
+    }, 1000)
+    return () => clearInterval(iv)
+  }, [upd.state])
+
   const active = useMemo(() => jobs.filter(j => j.status === 'running' || j.status === 'queued').length, [jobs])
 
   return (
@@ -225,12 +306,37 @@ export default function App() {
         </div>
         <div className="topbar-right">
           {active > 0 && <span className="active-pill">{active} in queue</span>}
+          {update?.available && (
+            <button className="update-btn" onClick={startUpdate}
+                    disabled={upd.state === 'downloading' || upd.state === 'installing'}
+                    title={update.notes || ''}>
+              {upd.state === 'downloading' ? `Downloading ${upd.progress}%`
+                : upd.state === 'ready' ? 'Install update'
+                : `⬆ Update to ${update.latest}`}
+            </button>
+          )}
+          {update && (
+            <button className="version-tag" onClick={recheck} title="Check for updates">
+              v{update.current}
+            </button>
+          )}
           <button className="theme-btn" onClick={() => setTheme(t => t === 'light' ? 'dark' : 'light')}
                   title="Toggle theme" aria-label="Toggle color theme">
             {theme === 'light' ? '🌙' : '☀️'}
           </button>
         </div>
       </header>
+
+      {upd.state === 'installing' && (
+        <div className="update-overlay" role="alert">
+          <div className="update-card">
+            <Cube size={34} speed={4} />
+            <h2>Installing DocPilot {update?.latest}</h2>
+            <p>DocPilot has closed to install the update and will open again by
+               itself in about a minute. You can close this tab.</p>
+          </div>
+        </div>
+      )}
 
       <main className="content">
         {/* ------------------------------------------------ new task card */}
@@ -330,6 +436,89 @@ export default function App() {
                   <input id="cq" type="url"
                          placeholder="https://youtu.be/…  - the file's own QR is used if empty"
                          value={coverQr} onChange={e => setCoverQr(e.target.value)} />
+                </div>
+              )}
+            </div>
+          )}
+
+          {testFields.length > 0 && (
+            <div className="coverbox">
+              <div className="coverbox-head">
+                <span>Test details</span>
+                <small>Leave a field empty to keep the value from the file name or the template</small>
+              </div>
+              {hasTest('series') && (
+                <div className="pagefield">
+                  <label htmlFor="ts-series">Test series name</label>
+                  <input id="ts-series" type="text" placeholder="e.g. Prelims Test Series 1.0"
+                         value={details.series || ''} onChange={setDetail('series')} />
+                </div>
+              )}
+              {hasTest('type') && (
+                <div className="pagefield">
+                  <label htmlFor="ts-type">Test series type</label>
+                  <div className="select-wrap ts-select">
+                    <select id="ts-type" value={details.type || ''} onChange={setDetail('type')}>
+                      <option value="">— as in the template (Full Length) —</option>
+                      <option value="Sectional">Sectional</option>
+                      <option value="Full Length">Full Length</option>
+                    </select>
+                  </div>
+                </div>
+              )}
+              {hasTest('subject') && (
+                <div className="pagefield">
+                  <label htmlFor="ts-subject">Subject name</label>
+                  <input id="ts-subject" type="text" placeholder="e.g. Indian Polity (Part II)"
+                         value={details.subject || ''} onChange={setDetail('subject')} />
+                </div>
+              )}
+              <div className="pagerow">
+                {hasTest('testno') && (
+                  <div className="pagefield">
+                    <label htmlFor="ts-testno">Test number</label>
+                    <input id="ts-testno" type="text" inputMode="numeric" maxLength={3} placeholder="e.g. 08"
+                           value={details.testno || ''} onChange={setDigits('testno')} />
+                  </div>
+                )}
+                {hasTest('code') && (
+                  <div className="pagefield">
+                    <label htmlFor="ts-code">Test code</label>
+                    <input id="ts-code" type="text" placeholder="e.g. PTS 2708"
+                           value={details.code || ''} onChange={setDetail('code')} />
+                  </div>
+                )}
+                {hasTest('year') && (
+                  <div className="pagefield">
+                    <label htmlFor="ts-year">Target year</label>
+                    <input id="ts-year" type="text" inputMode="numeric" maxLength={4} placeholder="e.g. 2027"
+                           value={details.year || ''} onChange={setDigits('year')} />
+                  </div>
+                )}
+              </div>
+              {(hasTest('marks') || hasTest('permark') || hasTest('time')) && (
+                <div className="pagerow">
+                  {hasTest('marks') && (
+                    <div className="pagefield">
+                      <label htmlFor="ts-marks">Total marks</label>
+                      <input id="ts-marks" type="text" inputMode="numeric" maxLength={4} placeholder="e.g. 200"
+                             value={details.marks || ''} onChange={setDigits('marks')} />
+                    </div>
+                  )}
+                  {hasTest('permark') && (
+                    <div className="pagefield">
+                      <label htmlFor="ts-permark">Marks per question</label>
+                      <input id="ts-permark" type="text" inputMode="decimal" maxLength={4} placeholder="e.g. 2"
+                             value={details.permark || ''} onChange={setDecimal('permark')} />
+                    </div>
+                  )}
+                  {hasTest('time') && (
+                    <div className="pagefield">
+                      <label htmlFor="ts-time">Time <span className="opt">(minutes)</span></label>
+                      <input id="ts-time" type="text" inputMode="numeric" maxLength={4} placeholder="e.g. 120"
+                             value={details.time || ''} onChange={setDigits('time')} />
+                    </div>
+                  )}
                 </div>
               )}
             </div>

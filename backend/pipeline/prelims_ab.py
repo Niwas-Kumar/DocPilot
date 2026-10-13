@@ -584,18 +584,40 @@ SUBJECT_HINT_RE = re.compile(
     r"csat|current|ethics|culture", re.I)
 
 
-def _test_line(source_path, issues):
+def series_line(details, default=SERIES_TITLE, sep=" "):
+    """Line 1 of the title block: the typed series name and target year,
+    as in the published booklet ('Prelims Wallah Test Series 2027').
+
+    A name that already carries the year is not given it twice. Without a
+    typed name the default stays, with its year swapped for a typed one."""
+    series = details.get("series")
+    year = details.get("year")
+    if not series:
+        return re.sub(r"20\d\d", year, default) if year else default
+    if year and year not in series:
+        return f"{series}{sep}{year}"
+    return series
+
+
+def _test_line(source_path, issues, subject=None, test_no=None):
     """'Test 08: Indian Polity (Part II)' read from the input file name.
 
     Production files are named like the published booklet
     ('Test 08_A_PTS 2708_Indian Polity Part II_FLT_...'); when the name says
     nothing, a placeholder is left and reported - the raw paper itself never
-    names the test.
+    names the test. A test number / subject typed on the form wins over the
+    file name's.
     """
     stem = os.path.splitext(os.path.basename(source_path))[0]
     parts = [p.strip() for p in re.split(r"[_|]", stem) if p.strip()]
     m = TEST_NO_RE.search(stem)
-    subject = None
+    no = test_no or (m.group(1).zfill(2) if m else None)
+    if subject:
+        if no:
+            return f"Test {no}: {subject}"
+        issues.append("Title line shows the subject only - no test number "
+                      "was typed and the file name carries no 'Test 08'.")
+        return subject
     for i, part in enumerate(parts):
         if TEST_NO_RE.fullmatch(part) and i + 2 < len(parts):
             cand = parts[i + 2]                # Test 08 | A | PTS 2708 | subject
@@ -605,11 +627,11 @@ def _test_line(source_path, issues):
     if subject is None:
         subject = next((p for p in parts if SUBJECT_HINT_RE.search(p)), None)
 
-    if m and subject:
+    if no and subject:
         # file names flatten the published '(Part II)' to 'Part II'
         subject = re.sub(r"\s+part\s+([IVX0-9]+)\s*$", r" (Part \1)", subject,
                          flags=re.I)
-        return f"Test {m.group(1).zfill(2)}: {subject}"
+        return f"Test {no}: {subject}"
     issues.append("Title line left blank - the file name carries no "
                   "'Test 08 ... <subject>' to read it from (the raw paper does "
                   "not name the test). Type it on the ruled line in Word.")
@@ -697,17 +719,19 @@ def _no_stretch_before_line_breaks(doc):
         compat.insert(0, flag)
 
 
-def _replace_header_code(out, input_path, notes):
+def _replace_header_code(out, input_path, notes, typed=None):
     """Swap the sample's test code in the page headers.
 
     The code sits inside a TEXTBOX in the header (and is duplicated in the
     mc:AlternateContent fallback), so section.header.paragraphs never sees it -
-    walk every w:p in the header parts' raw XML instead.
+    walk every w:p in the header parts' raw XML instead. A code typed on the
+    form wins over the file name's.
     """
     from docx.opc.constants import RELATIONSHIP_TYPE as RT
 
-    m = CODE_RE.search(os.path.splitext(os.path.basename(input_path))[0].upper())
-    code = f"{m.group(1)} {m.group(2)}" if m else HEADER_PLACEHOLDER
+    m = None if typed else CODE_RE.search(
+        os.path.splitext(os.path.basename(input_path))[0].upper())
+    code = typed or (f"{m.group(1)} {m.group(2)}" if m else HEADER_PLACEHOLDER)
     want = SAMPLE_HEADER_CODE.replace(" ", "")
 
     hit = False
@@ -729,7 +753,9 @@ def _replace_header_code(out, input_path, notes):
             hit = True
 
     if hit:
-        if m:
+        if typed:
+            notes.append(f"Header test code set to '{code}'.")
+        elif m:
             notes.append(f"Header test code set to '{code}' (from the file name).")
         else:
             notes.append(f"Header test code left as '{HEADER_PLACEHOLDER}' - the "
@@ -738,7 +764,11 @@ def _replace_header_code(out, input_path, notes):
 
 
 def build(input_path, out_path, start_page=None, variant="English",
-          progress=lambda s, p: None, cancelled=lambda: False):
+          progress=lambda s, p: None, cancelled=lambda: False, details=None):
+    """`details`: the Test Series fields typed on the form ({'series',
+    'testno', 'subject', 'code', 'year'}); anything missing comes from the file name or
+    the defaults, as before."""
+    details = details or {}
 
     progress("Reading source", 15)
     doc_in, blocks = dt.slice_blocks(input_path, start_page=start_page, cancelled=cancelled)
@@ -755,16 +785,17 @@ def build(input_path, out_path, start_page=None, variant="English",
 
     progress("Building booklet", 60)
     out = dt.open_template(TEMPLATE)
-    _replace_header_code(out, input_path, issues)
+    _replace_header_code(out, input_path, issues, typed=details.get("code"))
     anchors = dt.clear_body_keep_sections(out)
     sect_break = anchors[0] if anchors else None
     tail = out.element.body.find(qn('w:sectPr'))
 
     # --- section 1: title block + answer grid
     place = sect_break if sect_break is not None else tail
-    _title_line(out, SERIES_TITLE, place, ppr=TITLE_PPR)
-    _title_line(out, _test_line(input_path, issues), place, ppr=TEST_LINE_PPR,
-                size_half=36)
+    _title_line(out, series_line(details), place, ppr=TITLE_PPR)
+    _title_line(out, _test_line(input_path, issues, details.get("subject"),
+                                details.get("testno")),
+                place, ppr=TEST_LINE_PPR, size_half=36)
     build_answer_grid(out, answers, before=place)
     dt.new_paragraph(out, "", before=place)
     _no_stretch_before_line_breaks(out)
@@ -800,13 +831,14 @@ def build(input_path, out_path, start_page=None, variant="English",
 
 
 def process(input_path, workdir, variant="English", start_page=None,
-            progress=lambda s, p: None, cancelled=lambda: False, **kw):
+            progress=lambda s, p: None, cancelled=lambda: False, details=None,
+            **kw):
     os.makedirs(workdir, exist_ok=True)
     stem = os.path.splitext(os.path.basename(input_path))[0]
     out_name = f"{stem}_Answer Booklet_{variant}.docx"
     out_path = os.path.join(workdir, out_name)
     _, issues = build(input_path, out_path, start_page=start_page, variant=variant,
-                      progress=progress, cancelled=cancelled)
+                      progress=progress, cancelled=cancelled, details=details)
 
     # PDF companion beside the DOCX, same stem: the UI offers both downloads
     progress("Making the PDF", 95)

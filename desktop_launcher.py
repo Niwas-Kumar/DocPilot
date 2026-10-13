@@ -27,7 +27,8 @@ import time
 import traceback
 import webbrowser
 
-VERSION = "2.0-beta"
+from backend.version import LABEL as VERSION
+
 DEFAULT_PORT = 8930
 
 BG = "#0e1116"

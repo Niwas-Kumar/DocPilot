@@ -4,6 +4,10 @@
 `inputs` tells the UI what to ask for:
     pages      'none' | 'start' | 'start_end'
     files      1 | 2
+    test_fields  the Test Series details typed on the form (any of series,
+                 type, testno, subject, code, marks, permark, time,
+                 year); an empty one keeps
+                 the file name / template value
 `output` is the file the user downloads: 'pdf' or 'docx'.
 """
 
@@ -139,6 +143,7 @@ CATEGORIES = [
         "pages": "start",
         "files": 1,
         "output": "docx",
+        "test_fields": ["series", "testno", "subject", "code", "year"],
         "hint": "Give the page where the ANSWER KEY starts (the 1.(C) list). "
                 "Everything before it - the question paper - is skipped.",
     },
@@ -151,6 +156,7 @@ CATEGORIES = [
         "pages": "start",
         "files": 1,
         "output": "docx",
+        "test_fields": ["series", "testno", "subject", "code", "year"],
         "hint": "Give the page where the ANSWER KEY starts (the 1.(C) list).",
     },
     {
@@ -162,8 +168,38 @@ CATEGORIES = [
         "pages": "start_end",
         "files": 2,
         "output": "docx",
+        "test_fields": ["series", "type", "testno", "subject", "code", "marks",
+                        "permark", "time", "year"],
         "hint": "Upload the English paper and the Hindi paper. Hindi is placed "
                 "first, then the same questions in English on the next page.",
+    },
+    {
+        "id": "prelims_qb_english",
+        "label": "Prelims Test Series (Question Booklet English)",
+        "ready": True,
+        "variant": "English",
+        "pipeline": "prelims_qb",
+        "pages": "start_end",
+        "files": 1,
+        "output": "docx",
+        "test_fields": ["series", "type", "testno", "subject", "code", "marks",
+                        "permark", "time", "year"],
+        "hint": "Upload the English question paper: English cover and "
+                "instructions, then the questions two columns a page.",
+    },
+    {
+        "id": "prelims_qb_hindi",
+        "label": "Prelims Test Series (Question Booklet Hindi)",
+        "ready": True,
+        "variant": "Hindi",
+        "pipeline": "prelims_qb",
+        "pages": "start_end",
+        "files": 1,
+        "output": "docx",
+        "test_fields": ["series", "type", "testno", "subject", "code", "marks",
+                        "permark", "time", "year"],
+        "hint": "Upload the Hindi question paper: Hindi cover and instructions "
+                "(अनुदेश), then the questions two columns a page.",
     },
     {
         "id": "mains_ab_hindi",

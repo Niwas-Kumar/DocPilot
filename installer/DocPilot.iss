@@ -1,7 +1,8 @@
 ; DocPilot - Windows installer
 ;
 ; Build with:  tools\build_installer.bat        (rebuilds the app, then this)
-; or directly: ISCC.exe installer\DocPilot.iss
+; It passes the version from backend\version.py as /DAppVersion=...; the
+; values below are only the fallback for a bare ISCC.exe installer\DocPilot.iss
 ;
 ; PER-USER BY DESIGN. Two reasons, both load-bearing:
 ;   1. PW machines rarely grant admin, and a UAC prompt the client cannot
@@ -11,10 +12,15 @@
 ;      is not. PrivilegesRequired=lowest puts it in %LOCALAPPDATA%\Programs.
 
 #define AppName        "DocPilot"
-#define AppVersion     "2.0-beta"
+#ifndef AppVersion
+  #define AppVersion   "2.1.0-beta"
+#endif
+#ifndef AppVersionNum
+  #define AppVersionNum "2.1.0.0"
+#endif
 #define AppPublisher   "Physics Wallah - OnlyIAS"
 #define AppExe         "DocPilot.exe"
-#define SrcDir         "..\dist\DocPilot-2.0-beta"
+#define SrcDir         "..\dist\DocPilot-" + AppVersion
 ; must match APP_MUTEX in desktop_launcher.py
 #define AppMutex       "DocPilot_PW_OnlyIAS_Running"
 
@@ -55,7 +61,7 @@ ArchitecturesInstallIn64BitMode=x64compatible
 AppMutex={#AppMutex}
 CloseApplications=no
 RestartApplications=no
-VersionInfoVersion=2.0.0.0
+VersionInfoVersion={#AppVersionNum}
 VersionInfoCompany={#AppPublisher}
 VersionInfoDescription={#AppName} Setup
 
@@ -75,6 +81,8 @@ Name: "{autodesktop}\{#AppName}";                  Filename: "{app}\{#AppExe}"; 
 
 [Run]
 Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall skipifsilent
+; the in-app updater runs Setup with /SILENT /RELAUNCH=1: reopen DocPilot
+Filename: "{app}\{#AppExe}"; Flags: nowait; Check: RelaunchAfterUpdate
 
 [UninstallDelete]
 ; job scratch the app creates at runtime - Setup did not put it there, so
@@ -118,6 +126,11 @@ begin
   end;
 end;
 
+function RelaunchAfterUpdate(): Boolean;
+begin
+  Result := WizardSilent() and (ExpandConstant('{param:RELAUNCH|0}') = '1');
+end;
+
 function WordInstalled(): Boolean;
 begin
   Result := RegKeyExists(HKEY_CLASSES_ROOT, 'Word.Application');
@@ -127,8 +140,9 @@ function InitializeSetup(): Boolean;
 begin
   Result := True;
   { DocPilot renders every PDF through Word automation. Warn, but let them
-    install anyway - Word is often deployed after the tools are. }
-  if not WordInstalled() then
+    install anyway - Word is often deployed after the tools are. An in-app
+    update (silent) is never interrupted: the app was already running. }
+  if not WizardSilent() and not WordInstalled() then
     Result := MsgBox('Microsoft Word was not detected on this PC.'#13#10#13#10 +
                      'DocPilot uses Word to produce the PDF versions of each ' +
                      'document. Without it, DOCX output still works but PDF ' +

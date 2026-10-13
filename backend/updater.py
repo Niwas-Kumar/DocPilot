@@ -138,11 +138,19 @@ def _open_drive_file(link, sess):
     r = sess.get("https://drive.usercontent.google.com/download",
                  params={"id": fid, "export": "download", "confirm": "t"},
                  headers=UA, stream=True, timeout=60)
+    not_shared = UpdateError("The installer on Drive is not shared as 'Anyone "
+                             "with the link can view' - Drive asked for a "
+                             "sign-in instead of handing it over.")
+    if "accounts.google.com" in r.url or "/signin" in r.url:
+        raise not_shared
     if "text/html" in r.headers.get("Content-Type", ""):
         page = r.text
         form = re.search(r'<form[^>]+action="([^"]+)"', page)
         fields = dict(re.findall(r'<input[^>]+name="([^"]+)"[^>]+value="([^"]*)"',
                                  page))
+        # a restricted file answers with a sign-in form, not the virus-scan one
+        if form and not html.unescape(form.group(1)).startswith("https://"):
+            raise not_shared
         if not form or not fields:
             raise UpdateError("Drive did not hand over the installer - share it "
                               "as 'Anyone with the link can view'.")
@@ -218,10 +226,18 @@ def install():
     def ps_quote(s):
         return "'" + s.replace("'", "''") + "'"
 
+    # Setup's own log beside the download: the only record of a silent
+    # install that failed after DocPilot had already closed
+    log_arg = ps_quote('/LOG="%s"' % os.path.join(DOWNLOAD_DIR, "setup.log"))
     script = (f"Wait-Process -Id {os.getpid()} -ErrorAction SilentlyContinue; "
               f"Start-Process -FilePath {ps_quote(path)} -ArgumentList "
-              f"'/SILENT','/SUPPRESSMSGBOXES','/NORESTART','/RELAUNCH=1'")
-    flags = 0x00000008 | 0x00000200 | 0x08000000   # detached, new group, no window
+              f"'/SILENT','/SUPPRESSMSGBOXES','/NORESTART','/RELAUNCH=1',"
+              f"{log_arg}")
+    # A new process group with no window - NOT DETACHED_PROCESS: PowerShell
+    # started without a console does nothing at all, so 2.1.0 closed for the
+    # update and never ran the installer. Its own group keeps it alive when
+    # DocPilot exits a moment later.
+    flags = 0x00000200 | 0x08000000                # new group, no window
     subprocess.Popen(["powershell", "-NoProfile", "-NonInteractive",
                       "-WindowStyle", "Hidden", "-Command", script],
                      creationflags=flags, close_fds=True)

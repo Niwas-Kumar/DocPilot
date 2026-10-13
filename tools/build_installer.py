@@ -56,8 +56,17 @@ def main():
         sys.exit(f"app bundle missing: {BUNDLE}\nrun without --skip-app first")
 
     num = ".".join((VERSION.split(".") + ["0", "0", "0"])[:4])
-    run([find_iscc(), f"/DAppVersion={LABEL}", f"/DAppVersionNum={num}",
-         "installer/DocPilot.iss"])
+    iscc = [find_iscc(), f"/DAppVersion={LABEL}", f"/DAppVersionNum={num}",
+            "installer/DocPilot.iss"]
+    # Straight after PyInstaller the fresh bundle is often still held by the
+    # antivirus scan, and ISCC fails on it (2.1.1 build, 2026-10-13); the
+    # same command a minute later compiles cleanly
+    if subprocess.call(iscc, cwd=ROOT) != 0:
+        print("\nInno Setup failed - retrying in 60 s (fresh files are often "
+              "still being scanned)")
+        import time
+        time.sleep(60)
+        run(iscc)
 
     setup = os.path.join(ROOT, "dist", f"DocPilot-Setup-{LABEL}.exe")
     if not os.path.isfile(setup):

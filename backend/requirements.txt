@@ -1,0 +1,11 @@
+fastapi>=0.111
+uvicorn>=0.30
+python-docx>=1.1.2
+pymupdf>=1.24
+pywin32>=306
+requests>=2.31
+python-multipart>=0.0.9
+Pillow>=10.0
+fonttools>=4.50          # tools/install_fonts.py only (cuts static font instances)
+segno>=1.6          # Daily Editorial covers: video QR render
+zxing-cpp>=2.2      # Daily Editorial: read the video QR out of the raw file

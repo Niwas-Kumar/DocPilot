@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>DocPilot — PW OnlyIAS Document Studio</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📄</text></svg>" />
+    <script type="module" crossorigin src="/assets/index-B_MUZtgP.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-D2962I49.css">
+  </head>
+  <body>
+    <script>
+      // set theme before first paint (no flash of wrong theme)
+      (function () {
+        try {
+          var q = new URLSearchParams(location.search).get('theme');
+          var t = (q === 'dark' || q === 'light') ? q : (localStorage.getItem('docpilot-theme') || 'light');
+          document.documentElement.dataset.theme = t;
+        } catch (e) { document.documentElement.dataset.theme = 'light'; }
+      })();
+    </script>
+    <div id="root"></div>
+  </body>
+</html>
